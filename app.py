@@ -4,6 +4,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import xgboost as xgb
+from io import StringIO
+import requests
 import shap
 from lifelines import KaplanMeierFitter
 from lifelines.plotting import plot_lifetimes
@@ -17,6 +19,31 @@ from sksurv.metrics import concordance_index_ipcw, brier_score
 from sklearn import metrics
 import warnings
 warnings.filterwarnings("ignore")
+
+
+
+# URL of your default dataset
+default_dataset_url = "https://raw.githubusercontent.com/saniajain3/Churn-prediction/main/churn.txt"
+
+# Fetch the dataset from URL
+@st.cache_data
+def load_default_dataset():
+    response = requests.get(default_dataset_url)
+    if response.status_code == 200:
+        return response.text  # CSV as string
+    else:
+        st.error("❌ Failed to fetch the default dataset")
+        return None
+
+default_csv = load_default_dataset()
+
+if default_csv:
+    st.download_button(
+        label="📥 Download Default Churn Dataset",
+        data=default_csv,
+        file_name="default_churn.csv",
+        mime="text/csv"
+    )
 
 plt.rcParams['figure.figsize'] = [7.2, 4.8]
 pd.set_option("display.float_format", lambda x: "%.4f" % x)
@@ -38,6 +65,7 @@ st.markdown(
     """
 )
 
+
 uploaded_file = st.file_uploader("Upload churn dataset CSV", type=["csv", "txt"])
 
 def survival_y_cox(dframe: pd.DataFrame) -> np.array:
@@ -53,7 +81,7 @@ if uploaded_file is not None:
         st.error(f"❌ Failed to load file: {e}")
         st.stop()
 
-    required_cols = ['Churn?', 'Account Length', 'Day Mins', 'Day Calls', 'Eve Mins', 'Eve Calls', 'Night Charge', 'Night Calls', 'VMail Plan']
+    required_cols = ['Churn?', 'Account Length']
     missing_cols = [col for col in required_cols if col not in df.columns]
 
     if missing_cols:
