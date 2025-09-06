@@ -6,7 +6,7 @@ import seaborn as sns
 import xgboost as xgb
 import shap
 from lifelines import KaplanMeierFitter
-from lifelines.plotting import plot_lifetimes, add_at_risk_counts
+from lifelines.plotting import plot_lifetimes
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
@@ -21,40 +21,43 @@ warnings.filterwarnings("ignore")
 plt.rcParams['figure.figsize'] = [7.2, 4.8]
 pd.set_option("display.float_format", lambda x: "%.4f" % x)
 sns.set_style('darkgrid')
-
 SEED = 123
 
-st.title("Churn Survival Analysis with User Data Upload and Modeling")
+st.set_page_config(page_title="Churn Survival Analysis", layout="wide")
+
+st.title("🚀 Churn Survival Analysis with User Data Upload & Modeling")
+
+st.markdown(
+    """
+    ### Instructions:
+    - Upload a CSV file with at least the following columns:
+        - **Churn?**: churn indicator (e.g., 'False.' for no churn)
+        - **Account Length**: numeric duration
+        - Other columns like Day Mins, Day Calls, Eve Mins, Eve Calls, Night Charge, Night Calls, VMail Plan will be used for feature engineering.
+    - The app will train a survival model and display survival analyses and interactive SHAP explainability plots.
+    """
+)
 
 uploaded_file = st.file_uploader("Upload churn dataset CSV", type=["csv", "txt"])
 
-def add_features(df):
-    df = df.copy()
-    df["day_mins_per_call"] = df["Day Mins"] / (df["Day Calls"] + 1)
-    df["eve_mins_per_call"] = df["Eve Mins"] / (df["Eve Calls"] + 1)
-    df["charge_per_call"] = df["Night Charge"] / (df["Night Calls"] + 1)
-    df["vmail_plan_flag"] = (df["VMail Plan"] == "yes").astype(int)
-    return df
-
 def survival_y_cox(dframe: pd.DataFrame) -> np.array:
     y_survival = []
-    for idx, row in dframe[["duration", "event"]].iterrows():
-        if row["event"]:
-            y_survival.append(int(row["duration"]))
-        else:
-            y_survival.append(-int(row["duration"]))
+    for _, row in dframe[["duration", "event"]].iterrows():
+        y_survival.append(int(row["duration"]) if row["event"] else -int(row["duration"]))
     return np.array(y_survival)
 
 if uploaded_file is not None:
     try:
         df = pd.read_csv(uploaded_file)
     except Exception as e:
-        st.error(f"Failed to load file: {e}")
+        st.error(f"❌ Failed to load file: {e}")
         st.stop()
 
-    # Basic checks and preprocessing like your code
-    if ("Churn?" not in df.columns) or ("Account Length" not in df.columns):
-        st.error("Dataset must have 'Churn?' and 'Account Length' columns following your original data schema.")
+    required_cols = ['Churn?', 'Account Length', 'Day Mins', 'Day Calls', 'Eve Mins', 'Eve Calls', 'Night Charge', 'Night Calls', 'VMail Plan']
+    missing_cols = [col for col in required_cols if col not in df.columns]
+
+    if missing_cols:
+        st.error(f"❌ Dataset is missing required columns: {missing_cols}")
         st.stop()
 
     df["event"] = np.where(df["Churn?"] == "False.", 0, 1)
@@ -62,15 +65,19 @@ if uploaded_file is not None:
     df.drop(columns=["Churn?"], inplace=True)
     df = df.dropna().drop_duplicates()
 
-    st.write("Data preview:")
+    # Sidebar info
+    with st.sidebar:
+        st.header("Dataset Overview")
+        st.write(f"🔹 Total records: {df.shape[0]}")
+        st.write(f"🔹 Percent churn rate: {df.event.mean():.4f}")
+        st.write("🔹 Duration statistics:")
+        st.write(df['duration'].describe())
+
+    st.subheader("Data Preview")
     st.dataframe(df.head())
 
-    st.write(f"Total records: {df.shape[0]}")
-    st.write(f"Percent churn rate: {df.event.mean():.4f}")
-    st.write("Duration intervals:")
-    st.write(df['duration'].describe())
-
-    st.write("Plotting customer attrition lifetimes for first 10 customers:")
+    # Customer attrition lifetimes plot
+    st.subheader("Observed Customer Attrition (First 10 Customers)")
     fig, ax = plt.subplots()
     plot_lifetimes(df.head(10)['duration'], df.head(10)['event'], ax=ax)
     ax.set_xlabel("Duration: Account Length (days)")
@@ -78,60 +85,57 @@ if uploaded_file is not None:
     ax.set_title("Observed Customer Attrition")
     st.pyplot(fig)
 
-    st.write("Kaplan-Meier survival function:")
+    # Kaplan-Meier survival curve with median line and legend
+    st.subheader("Kaplan-Meier Survival Function")
     kmf = KaplanMeierFitter()
     kmf.fit(df['duration'], event_observed=df['event'])
     fig, ax = plt.subplots()
     kmf.plot_survival_function(ax=ax)
-    ax.set_title('Survival function for telco churn')
+    ax.set_title('Survival function for churn')
     ax.set_xlabel("Duration: Account Length (days)")
-    ax.set_ylabel("Churn Risk (Survival Probability)")
-    ax.axvline(x=kmf.median_survival_time_, color='r', linestyle='--')
+    ax.set_ylabel("Survival Probability")
+    ax.axvline(x=kmf.median_survival_time_, color='r', linestyle='--', label='Median Survival Time')
+    handles, labels = ax.get_legend_handles_labels()
+    ax.legend(handles, labels)
     st.pyplot(fig)
 
-    st.write("Adding feature transformations...")
-    df = add_features(df)
+    # Feature engineering
+    st.subheader("Feature Engineering & Model Training")
 
-    st.write("Splitting dataset into train and test...")
+    st.write("Adding new features based on call usage ratios and voicemail plan...")
+    df["day_mins_per_call"] = df["Day Mins"] / (df["Day Calls"] + 1)
+    df["eve_mins_per_call"] = df["Eve Mins"] / (df["Eve Calls"] + 1)
+    df["charge_per_call"] = df["Night Charge"] / (df["Night Calls"] + 1)
+    df["vmail_plan_flag"] = (df["VMail Plan"] == "yes").astype(int)
+
     df_train, df_test = train_test_split(df, test_size=0.2, random_state=SEED)
 
-    numerical_idx = (df.select_dtypes(exclude=['object', 'category'])
-                     .drop(['event', 'duration'], axis=1)
-                     .columns.tolist())
+    numerical_cols = df.select_dtypes(exclude=['object', 'category']).drop(['event', 'duration'], axis=1).columns.tolist()
+    categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
 
-    categorical_idx = (df.select_dtypes(include=['object', 'category'])
-                       .columns.tolist())
+    numeric_transformer = Pipeline([
+        ("imputer", SimpleImputer(strategy="median")),
+        ("scaler", StandardScaler())
+    ])
 
-    numeric_transformer = Pipeline(
-        steps=[
-            ("imputer", SimpleImputer(strategy="median")),
-            ("scaler", StandardScaler())
-        ]
-    )
+    categorical_transformer = Pipeline([
+        ("imputer", SimpleImputer(strategy="constant", fill_value="missing")),
+        ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False))
+    ])
 
-    categorical_transformer = Pipeline(
-        steps=[
-            ("imputer", SimpleImputer(strategy="constant", fill_value="missing")),
-            ("onehot", OneHotEncoder(sparse_output=False, handle_unknown="ignore"))
-        ]
-    )
+    preprocessor = ColumnTransformer([
+        ("num", numeric_transformer, numerical_cols),
+        ("cat", categorical_transformer, categorical_cols)
+    ], remainder="passthrough")
 
-    preprocessor = ColumnTransformer(
-        transformers=[
-            ("numerical", numeric_transformer, numerical_idx),
-            ("categorical", categorical_transformer, categorical_idx)
-        ],
-        remainder="passthrough"
-    )
-
-    st.write("Applying preprocessing pipeline...")
+    st.write("Applying preprocessing...")
     train_features = preprocessor.fit_transform(df_train.drop(['event', 'duration'], axis=1))
     test_features = preprocessor.transform(df_test.drop(['event', 'duration'], axis=1))
 
-    feature_names = np.hstack((
-        np.array(numerical_idx),
-        preprocessor.transformers_[1][1].named_steps['onehot'].get_feature_names_out(categorical_idx)
-    )).tolist()
+    feature_names = np.hstack([
+        numerical_cols,
+        preprocessor.named_transformers_['cat'].named_steps['onehot'].get_feature_names_out(categorical_cols)
+    ]).tolist()
 
     dm_train = xgb.DMatrix(train_features, label=survival_y_cox(df_train), feature_names=feature_names)
     dm_test = xgb.DMatrix(test_features, label=survival_y_cox(df_test), feature_names=feature_names)
@@ -155,11 +159,11 @@ if uploaded_file is not None:
         early_stopping_rounds=10
     )
 
-    st.write("Making predictions on test set...")
-    df_test.loc[:, "preds"] = bst.predict(dm_test, output_margin=True)
-    df_test.loc[:, "preds_exp"] = bst.predict(dm_test, output_margin=False)
+    st.subheader("Model Predictions and Evaluation")
 
-    st.write("Median predictions by 20 quantiles of duration:")
+    df_test["preds"] = bst.predict(dm_test, output_margin=True)
+    df_test["preds_exp"] = bst.predict(dm_test, output_margin=False)
+
     fig, ax = plt.subplots()
     df_test.groupby(pd.qcut(df_test['duration'], q=20))['preds_exp'].median().plot(kind="bar", ax=ax)
     ax.set_xlabel("Duration Quantiles")
@@ -169,39 +173,32 @@ if uploaded_file is not None:
     y_train = Surv.from_dataframe("event", "duration", df_train)
     y_test = Surv.from_dataframe("event", "duration", df_test)
 
-    c_index, c_index_se = concordance_index_ipcw(y_train, y_test, df_test['preds'], tau=100)
-    st.write(f"C-index: {c_index:.4f}")
-    st.write(f"Standard Error: {c_index_se:.4f}")
+    c_index = concordance_index_ipcw(y_train, y_test, df_test['preds'], tau=100)
+    times, bscores = brier_score(y_train, y_test, df_test['preds'], df_test['duration'].max() - 1)
 
-    st.write("Brier score:")
-    times, score = brier_score(y_train, y_test, df_test['preds'], df_test['duration'].max() - 1)
-    st.line_chart(score)
 
-    st.write("SHAP summary plot of model feature importance:")
+    st.subheader("Model Explainability with SHAP")
+
     explainer = shap.TreeExplainer(bst, feature_names=feature_names)
     shap_values = explainer.shap_values(test_features)
 
-    # SHAP summary plot requires matplotlib figure capture
     fig, ax = plt.subplots(figsize=(12, 8))
     shap.summary_plot(shap_values, pd.DataFrame(test_features, columns=feature_names), show=False)
     st.pyplot(fig)
 
-    idx_sample = st.number_input("Input index to inspect SHAP force plot:", min_value=0, max_value=len(df_test) - 1, value=0)
-    st.write(f"Inspecting individual sample index: {idx_sample}")
+    sample_idx = st.number_input("Select individual index for SHAP force plot:", 0, len(df_test) - 1, 0)
+    st.write(f"SHAP force plot for individual index: {sample_idx}")
+
     shap_fig = shap.force_plot(
         explainer.expected_value,
-        shap_values[idx_sample, :],
-        pd.DataFrame(test_features, columns=feature_names).iloc[idx_sample, :],
+        shap_values[sample_idx, :],
+        pd.DataFrame(test_features, columns=feature_names).iloc[sample_idx, :],
         matplotlib=True
     )
     st.pyplot(shap_fig)
 
-    y_preds = np.exp(df_test.preds)
-    y_pred_binary = np.where(y_preds > 0.5, 1, 0)
-
-    st.write(f"Accuracy score: {metrics.accuracy_score(df_test.event, y_pred_binary):.4f}")
-    st.write(f"AUC score: {metrics.roc_auc_score(df_test.event, y_pred_binary):.4f}")
-    st.text(metrics.classification_report(df_test.event, y_pred_binary))
+    y_preds = np.exp(df_test["preds"])
+    y_pred_binary = (y_preds > 0.5).astype(int)
 
 else:
     st.info("Please upload a churn dataset CSV file to start analysis.")
