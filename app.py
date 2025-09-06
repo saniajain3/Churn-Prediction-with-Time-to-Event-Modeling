@@ -52,7 +52,7 @@ SEED = 123
 
 st.set_page_config(page_title="Churn Survival Analysis", layout="wide")
 
-st.title("🚀 Churn Survival Analysis with User Data Upload & Modeling")
+st.title("🚀 Churn Prediction with XGBoost Time-to-Event Modeling")
 
 st.markdown(
     """
@@ -60,7 +60,6 @@ st.markdown(
     - Upload a CSV file with at least the following columns:
         - **Churn?**: churn indicator (e.g., 'False.' for no churn)
         - **Account Length**: numeric duration
-        - Other columns like Day Mins, Day Calls, Eve Mins, Eve Calls, Night Charge, Night Calls, VMail Plan will be used for feature engineering.
     - The app will train a survival model and display survival analyses and interactive SHAP explainability plots.
     """
 )
